@@ -2,6 +2,8 @@
 
 A Moroccan-themed Monopoly board game built entirely in Go with the [Glow](https://github.com/AchrafSoltani/glow) engine — a pure Go 2D software renderer that communicates directly with X11. No CGo, no images, no external assets. Everything is drawn with primitives and generated procedurally.
 
+![MoroccanMonopoly Gameplay](screenshot.png)
+
 ## Features
 
 - **40-space board** with real Moroccan cities and landmarks — from Derb Sultan to Mosquee Hassan II
@@ -24,6 +26,8 @@ A Moroccan-themed Monopoly board game built entirely in Go with the [Glow](https
 | R | Resume saved game |
 | F5 | Save game (during play) |
 | Mouse | Click buttons, hover spaces for property cards |
+
+![Buy Property Dialog](screenshot-dialog.png)
 
 ## Building from Source
 
