@@ -5,6 +5,7 @@ const (
 	AIBuyBufferEarly = 200 // keep at least this much after buying (early game)
 	AIBuyBufferLate  = 100 // keep at least this much after buying (late game)
 	AIBuildBuffer    = 150 // keep after building
+	AIBuildBufferLow = 80  // keep after building when cash-rich (>1000 MAD)
 )
 
 // ShouldBuy decides if an AI player should buy a property.

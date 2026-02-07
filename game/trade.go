@@ -47,10 +47,13 @@ func (g *Game) openTradeDialog() {
 	g.TradeWantedProps = nil
 	g.TradeOfferedMoney = 0
 	g.TradeWantedMoney = 0
+	g.TradeOfferJailCard = false
+	g.TradeWantJailCard = false
+	g.TradeStage = TradeSelectPartner
+	g.PendingOffer = nil
 	g.Dialog = DialogTrade
 	g.Phase = PhaseTrade
 
-	// For simplicity, auto-select first partner
 	g.SelectableSpaces = partners
 	g.SelectedSpace = -1
 }
@@ -95,24 +98,53 @@ func (g *Game) executeTrade(offer TradeOffer) {
 
 // aiEvaluateTrade decides if the AI should accept a trade offer.
 func (g *Game) aiEvaluateTrade(offer TradeOffer) bool {
-	// Simple heuristic: accept if value of received >= value of given
+	aiID := offer.ToPlayer
 	received := offer.OfferedMoney
 	given := offer.WantedMoney
 
 	for _, idx := range offer.OfferedProps {
-		received += g.Board.Spaces[idx].Price
+		space := g.Board.Spaces[idx]
+		value := space.Price
+		// Weight higher if receiving this property would complete AI's monopoly
+		if g.almostMonopoly(aiID, space.Group) {
+			value = value * 18 / 10 // 1.8x
+		}
+		received += value
 	}
 	for _, idx := range offer.WantedProps {
 		space := g.Board.Spaces[idx]
-		given += space.Price
+		value := space.Price
 
 		// Reject if this would complete opponent's monopoly
 		if g.wouldCompleteMonopoly(offer.FromPlayer, space.Group) {
 			return false
 		}
+		// Weight higher if AI almost has a monopoly in that group (reluctant to give up)
+		if g.almostMonopoly(aiID, space.Group) {
+			value = value * 15 / 10 // 1.5x
+		}
+		given += value
 	}
 
 	return received >= given
+}
+
+// almostMonopoly returns true if the player owns all but one property in a group.
+func (g *Game) almostMonopoly(playerID int, group board.ColorGroup) bool {
+	if group == board.GroupNone {
+		return false
+	}
+	spaces := g.Board.SpacesInGroup(group)
+	if len(spaces) == 0 {
+		return false
+	}
+	owned := 0
+	for _, idx := range spaces {
+		if g.Board.Properties[idx].OwnerID == playerID {
+			owned++
+		}
+	}
+	return owned == len(spaces)-1
 }
 
 // wouldCompleteMonopoly checks if giving a player a property would complete their monopoly.
