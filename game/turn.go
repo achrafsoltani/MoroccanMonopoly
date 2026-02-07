@@ -3,10 +3,12 @@ package game
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 
 	"github.com/AchrafSoltani/MoroccanMonopoly/board"
 	"github.com/AchrafSoltani/MoroccanMonopoly/config"
 	"github.com/AchrafSoltani/MoroccanMonopoly/player"
+	"github.com/AchrafSoltani/MoroccanMonopoly/render"
 )
 
 // updatePlaying handles the main gameplay loop.
@@ -89,7 +91,7 @@ func (g *Game) handleButtonClicks() {
 
 // handleDialogClicks processes clicks on dialog buttons.
 func (g *Game) handleDialogClicks() {
-	if g.DialogHovered < 0 {
+	if g.DialogHovered == render.DialogNoHover {
 		return
 	}
 
@@ -127,6 +129,20 @@ func (g *Game) handleDialogClicks() {
 			g.Dialog = DialogNone
 			g.startDiceRoll()
 		}
+
+	case DialogIncomeTax:
+		p := g.currentPlayer()
+		tenPercent := g.PlayerNetWorth(p.ID) / 10
+		switch g.DialogHovered {
+		case 0: // Pay 200 MAD flat
+			g.AddMessage(fmt.Sprintf("%s pays 200 MAD income tax (flat)", p.Name))
+			g.payDebt(p, nil, 200)
+		case 1: // Pay 10%
+			g.AddMessage(fmt.Sprintf("%s pays %d MAD income tax (10%%)", p.Name, tenPercent))
+			g.payDebt(p, nil, tenPercent)
+		}
+		g.Dialog = DialogNone
+		g.Phase = PhasePostAction
 
 	case DialogBuild:
 		if g.DialogHovered == -1 {
@@ -194,23 +210,66 @@ func (g *Game) handleDialogClicks() {
 
 	case DialogTrade:
 		if g.DialogHovered == -1 {
+			// Cancel at any stage
 			g.Dialog = DialogNone
 			g.Phase = PhasePostAction
 			g.TradePartner = -1
 			g.updateButtonStates()
-		} else if g.TradePartner < 0 {
-			// Selected a partner
+			return
+		}
+		switch g.TradeStage {
+		case TradeSelectPartner:
 			g.TradePartner = g.DialogHovered
-		} else {
-			// Selected a property to trade
+			g.TradeStage = TradeSelectOffer
+		case TradeSelectOffer:
 			idx := g.DialogHovered
-			if idx >= 1000 {
-				// Want a property from partner
-				actualIdx := idx - 1000
+			switch {
+			case idx >= 0 && idx < 1000:
+				// Toggle own property
+				g.TradeOfferedProps = g.tradePropsToggle(g.TradeOfferedProps, idx)
+			case idx >= 1000 && idx < 2000:
+				// Toggle partner property
+				g.TradeWantedProps = g.tradePropsToggle(g.TradeWantedProps, idx-1000)
+			case idx == 2000:
+				g.TradeOfferedMoney += 50
+			case idx == 2001:
+				if g.TradeOfferedMoney >= 50 {
+					g.TradeOfferedMoney -= 50
+				}
+			case idx == 2002:
+				g.TradeWantedMoney += 50
+			case idx == 2003:
+				if g.TradeWantedMoney >= 50 {
+					g.TradeWantedMoney -= 50
+				}
+			case idx == 2004:
+				g.TradeOfferJailCard = !g.TradeOfferJailCard
+			case idx == 2005:
+				g.TradeWantJailCard = !g.TradeWantJailCard
+			case idx == 3000:
+				// Move to confirm stage
+				g.TradeStage = TradeConfirm
+			}
+		case TradeConfirm:
+			switch g.DialogHovered {
+			case 0: // Propose
+				offeredJail := 0
+				if g.TradeOfferJailCard {
+					offeredJail = 1
+				}
+				wantedJail := 0
+				if g.TradeWantJailCard {
+					wantedJail = 1
+				}
 				offer := TradeOffer{
-					FromPlayer:  g.currentPlayer().ID,
-					ToPlayer:    g.TradePartner,
-					WantedProps: []int{actualIdx},
+					FromPlayer:       g.currentPlayer().ID,
+					ToPlayer:         g.TradePartner,
+					OfferedProps:     g.TradeOfferedProps,
+					WantedProps:      g.TradeWantedProps,
+					OfferedMoney:     g.TradeOfferedMoney,
+					WantedMoney:      g.TradeWantedMoney,
+					OfferedJailCards: offeredJail,
+					WantedJailCards:  wantedJail,
 				}
 				partner := g.Players[g.TradePartner]
 				if partner.IsAI {
@@ -219,30 +278,33 @@ func (g *Game) handleDialogClicks() {
 					} else {
 						g.AddMessage(fmt.Sprintf("%s declined the trade", partner.Name))
 					}
+					g.Dialog = DialogNone
+					g.Phase = PhasePostAction
+					g.TradePartner = -1
+					g.updateButtonStates()
 				} else {
-					g.executeTrade(offer)
+					// Human-to-human: show offer to partner for acceptance
+					g.PendingOffer = &offer
+					g.Dialog = DialogTradeReceived
 				}
+			case 1: // Go back
+				g.TradeStage = TradeSelectOffer
+			}
+		}
+
+	case DialogTradeReceived:
+		if g.PendingOffer != nil {
+			switch g.DialogHovered {
+			case 0: // Accept
+				g.executeTrade(*g.PendingOffer)
+				g.PendingOffer = nil
 				g.Dialog = DialogNone
 				g.Phase = PhasePostAction
 				g.TradePartner = -1
 				g.updateButtonStates()
-			} else {
-				// Offer one of own properties
-				offer := TradeOffer{
-					FromPlayer:   g.currentPlayer().ID,
-					ToPlayer:     g.TradePartner,
-					OfferedProps:  []int{idx},
-				}
-				partner := g.Players[g.TradePartner]
-				if partner.IsAI {
-					if g.aiEvaluateTrade(offer) {
-						g.executeTrade(offer)
-					} else {
-						g.AddMessage(fmt.Sprintf("%s declined the trade", partner.Name))
-					}
-				} else {
-					g.executeTrade(offer)
-				}
+			case 1: // Decline
+				g.AddMessage(fmt.Sprintf("%s declined the trade", g.Players[g.PendingOffer.ToPlayer].Name))
+				g.PendingOffer = nil
 				g.Dialog = DialogNone
 				g.Phase = PhasePostAction
 				g.TradePartner = -1
@@ -400,9 +462,16 @@ func (g *Game) resolveLanding() {
 		g.drawCommunityCard()
 
 	case board.SpaceTax:
-		g.AddMessage(fmt.Sprintf("%s pays %d MAD tax", p.Name, space.TaxAmount))
-		g.payDebt(p, nil, space.TaxAmount) // nil = bank
-		g.Phase = PhasePostAction
+		if p.Position == 4 {
+			// Income Tax: player chooses between flat 200 MAD or 10% of net worth
+			g.Dialog = DialogIncomeTax
+			g.Phase = PhaseDialog
+		} else {
+			// Luxury Tax or other flat taxes
+			g.AddMessage(fmt.Sprintf("%s pays %d MAD tax", p.Name, space.TaxAmount))
+			g.payDebt(p, nil, space.TaxAmount) // nil = bank
+			g.Phase = PhasePostAction
+		}
 
 	case board.SpaceJail:
 		g.AddMessage(fmt.Sprintf("%s is just visiting", p.Name))
@@ -672,6 +741,26 @@ func (g *Game) executeCard(card board.Card) {
 		}
 		total := card.Amount * (len(g.alivePlayers()) - 1)
 		g.AddMessage(fmt.Sprintf("%s pays %d MAD total to all players", p.Name, total))
+
+	case board.EffectMoveNearest:
+		// Amount == 1: nearest railroad, Amount == 2: nearest utility
+		var targets []int
+		if card.Amount == 1 {
+			targets = g.Board.RailroadSpaces()
+		} else {
+			targets = g.Board.UtilitySpaces()
+		}
+		nearest := g.findNearestClockwise(p.Position, targets)
+		if nearest >= 0 {
+			// Check if passing GO
+			if nearest < p.Position {
+				p.Receive(config.GoSalary)
+				g.AddMessage(fmt.Sprintf("%s passed GO! +%d MAD", p.Name, config.GoSalary))
+			}
+			p.Position = nearest
+			g.Phase = PhaseLanded
+			return
+		}
 	}
 
 	g.Phase = PhasePostAction
@@ -824,13 +913,25 @@ func (g *Game) updateAI(dt float64) {
 			g.startDiceRoll()
 		}
 	case PhaseJailDecision:
-		if p.GetOutOfJailCards > 0 {
+		// Determine game stage: late game if >20 total properties owned
+		totalProps := 0
+		for _, pl := range g.Players {
+			totalProps += len(pl.Properties)
+		}
+		lateGame := totalProps > 20
+
+		if p.GetOutOfJailCards > 0 && !lateGame {
 			p.GetOutOfJailCards--
 			p.InJail = false
 			p.JailTurns = 0
 			g.Dialog = DialogNone
 			g.Phase = PhasePreRoll
 			g.AddMessage(fmt.Sprintf("%s (AI) used Get Out of Jail Free card", p.Name))
+		} else if lateGame {
+			// Late game: prefer staying in jail (safe from rent)
+			// Unless forced out after max turns
+			g.Dialog = DialogNone
+			g.startDiceRoll()
 		} else if p.Money >= config.JailFine+200 {
 			p.Pay(config.JailFine)
 			p.InJail = false
@@ -849,7 +950,8 @@ func (g *Game) updateAI(dt float64) {
 	case PhaseLanded:
 		g.resolveLanding()
 	case PhaseDialog:
-		if g.Dialog == DialogBuyProperty {
+		switch g.Dialog {
+		case DialogBuyProperty:
 			space := g.Board.Spaces[p.Position]
 			// Count total owned to adjust strategy
 			totalOwned := 0
@@ -861,6 +963,18 @@ func (g *Game) updateAI(dt float64) {
 			} else {
 				g.declineBuy()
 			}
+		case DialogIncomeTax:
+			// AI picks the cheaper option
+			tenPercent := g.PlayerNetWorth(p.ID) / 10
+			if tenPercent < 200 {
+				g.AddMessage(fmt.Sprintf("%s (AI) pays %d MAD income tax (10%%)", p.Name, tenPercent))
+				g.payDebt(p, nil, tenPercent)
+			} else {
+				g.AddMessage(fmt.Sprintf("%s (AI) pays 200 MAD income tax (flat)", p.Name))
+				g.payDebt(p, nil, 200)
+			}
+			g.Dialog = DialogNone
+			g.Phase = PhasePostAction
 		}
 	case PhasePostAction:
 		g.endTurn()
@@ -869,22 +983,100 @@ func (g *Game) updateAI(dt float64) {
 	}
 }
 
-// aiBuildIfPossible has the AI build houses if it can.
+// findNearestClockwise finds the nearest target space clockwise from the current position.
+func (g *Game) findNearestClockwise(from int, targets []int) int {
+	best := -1
+	bestDist := config.SpaceCount + 1
+	for _, t := range targets {
+		dist := (t - from + config.SpaceCount) % config.SpaceCount
+		if dist == 0 {
+			dist = config.SpaceCount // same space means go all the way around
+		}
+		if dist < bestDist {
+			bestDist = dist
+			best = t
+		}
+	}
+	return best
+}
+
+// groupPriority returns a build priority for a colour group.
+// Lower values are higher priority (based on standard Monopoly landing frequency).
+func groupPriority(g board.ColorGroup) int {
+	switch g {
+	case board.GroupOrange:
+		return 0
+	case board.GroupRed:
+		return 1
+	case board.GroupYellow:
+		return 2
+	case board.GroupGreen:
+		return 3
+	case board.GroupLightBlue:
+		return 4
+	case board.GroupPink:
+		return 5
+	case board.GroupDarkBlue:
+		return 6
+	case board.GroupBrown:
+		return 7
+	default:
+		return 99
+	}
+}
+
+// aiBuildIfPossible has the AI strategically build one house per call.
+// It prioritises high-traffic groups and focuses on reaching 3 houses
+// on one group before starting another (the ROI sweet spot).
 func (g *Game) aiBuildIfPossible() {
 	p := g.currentPlayer()
 	buildable := g.BuildableProperties(p.ID)
-	for _, idx := range buildable {
-		space := g.Board.Spaces[idx]
-		if p.ShouldBuild(space.HouseCost) {
-			cost := g.BuildHouse(idx)
-			p.Pay(cost)
-			level := g.Board.Properties[idx].Houses
-			levelName := fmt.Sprintf("%d house(s)", level)
-			if level == config.HotelLevel {
-				levelName = "hotel"
-			}
-			g.AddMessage(fmt.Sprintf("%s (AI) built on %s (%s)", p.Name, space.Name, levelName))
+	if len(buildable) == 0 {
+		return
+	}
+
+	// Use a lower buffer when cash-rich
+	buffer := player.AIBuildBuffer
+	if p.Money > 1000 {
+		buffer = player.AIBuildBufferLow
+	}
+
+	// Sort buildable properties: prefer groups with fewer houses (to reach 3 first),
+	// then by group priority (high-frequency groups first).
+	sort.Slice(buildable, func(i, j int) bool {
+		si := g.Board.Spaces[buildable[i]]
+		sj := g.Board.Spaces[buildable[j]]
+		hi := g.Board.Properties[buildable[i]].Houses
+		hj := g.Board.Properties[buildable[j]].Houses
+
+		// Prefer the group that hasn't reached 3 houses yet
+		iUnder3 := hi < 3
+		jUnder3 := hj < 3
+		if iUnder3 != jUnder3 {
+			return iUnder3
 		}
+		// Then by group priority
+		pi := groupPriority(si.Group)
+		pj := groupPriority(sj.Group)
+		if pi != pj {
+			return pi < pj
+		}
+		// Then by fewest houses (even building)
+		return hi < hj
+	})
+
+	// Build one house on the best candidate
+	idx := buildable[0]
+	space := g.Board.Spaces[idx]
+	if p.Money >= space.HouseCost+buffer {
+		cost := g.BuildHouse(idx)
+		p.Pay(cost)
+		level := g.Board.Properties[idx].Houses
+		levelName := fmt.Sprintf("%d house(s)", level)
+		if level == config.HotelLevel {
+			levelName = "hotel"
+		}
+		g.AddMessage(fmt.Sprintf("%s (AI) built on %s (%s)", p.Name, space.Name, levelName))
 	}
 }
 

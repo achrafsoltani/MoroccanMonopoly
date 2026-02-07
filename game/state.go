@@ -38,10 +38,12 @@ const (
 	DialogChanceCard
 	DialogCommunityCard
 	DialogPayTax
+	DialogIncomeTax
 	DialogJailOptions
 	DialogBuild
 	DialogMortgage
 	DialogTrade
+	DialogTradeReceived
 	DialogAuction
 	DialogBankruptcy
 	DialogGameOver
