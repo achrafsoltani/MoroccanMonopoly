@@ -1,6 +1,8 @@
 package render
 
 import (
+	"math"
+
 	"github.com/AchrafSoltani/MoroccanMonopoly/player"
 	"github.com/AchrafSoltani/glow"
 )
@@ -20,12 +22,18 @@ func DrawToken(canvas *glow.Canvas, p *player.Player, r SpaceRect) {
 	col := PlayerColors[p.ID%4]
 	shape := TokenShape(p.ID % 4)
 
-	// Offset tokens so multiple players on the same space don't overlap
-	ox := 15 + (p.ID%2)*25
-	oy := 30 + (p.ID/2)*25
-
-	cx := r.X + ox
-	cy := r.Y + oy
+	var cx, cy int
+	if p.InJail {
+		// Position jailed tokens in the lower-left "In Jail" subsection of the jail corner
+		cx = r.X + 12 + (p.ID%2)*18
+		cy = r.Y + r.H - 18 + (p.ID/2)*10
+	} else {
+		// Offset tokens so multiple players on the same space don't overlap
+		ox := 15 + (p.ID%2)*25
+		oy := 30 + (p.ID/2)*25
+		cx = r.X + ox
+		cy = r.Y + oy
+	}
 	size := 8
 
 	switch shape {
@@ -42,6 +50,39 @@ func DrawToken(canvas *glow.Canvas, p *player.Player, r SpaceRect) {
 		drawFilledTriangle(canvas, cx, cy-size, cx-size, cy+size, cx+size, cy+size, col)
 		canvas.DrawTriangle(cx, cy-size, cx-size, cy+size, cx+size, cy+size, TextDark)
 	}
+
+	// Draw jail bars over jailed tokens
+	if p.InJail {
+		barCol := glow.Color{R: 100, G: 100, B: 100}
+		for i := 0; i < 3; i++ {
+			bx := cx - 8 + i*8
+			canvas.DrawLine(bx, cy-10, bx, cy+10, barCol)
+		}
+	}
+}
+
+// DrawTokenHighlight draws a pulsing ring around the current player's token.
+func DrawTokenHighlight(canvas *glow.Canvas, p *player.Player, r SpaceRect, timer float64) {
+	col := PlayerColors[p.ID%4]
+
+	var cx, cy int
+	if p.InJail {
+		cx = r.X + 12 + (p.ID%2)*18
+		cy = r.Y + r.H - 18 + (p.ID/2)*10
+	} else {
+		ox := 15 + (p.ID%2)*25
+		oy := 30 + (p.ID/2)*25
+		cx = r.X + ox
+		cy = r.Y + oy
+	}
+
+	// Pulsing radius
+	pulse := math.Sin(timer * 4.0)
+	radius := 12 + int(pulse*3)
+
+	// Draw concentric ring using the player's colour
+	canvas.DrawCircle(cx, cy, radius, col)
+	canvas.DrawCircle(cx, cy, radius+1, col)
 }
 
 // DrawTokenAt draws a token at an arbitrary position (for HUD/dialogs).
