@@ -79,6 +79,8 @@ func ChanceCards() []Card {
 		{Text: "Votre investissement immobilier rapporte: recevez 100 MAD.", Effect: EffectCollect, Amount: 100},
 		{Text: "Allez a Chefchaouen. Si vous passez par DEPART, recevez 200 MAD.", Effect: EffectMoveTo, Amount: 37},
 		{Text: "Allez a Derb Sultan.", Effect: EffectMoveTo, Amount: 1},
+		{Text: "Avancez jusqu'a la Gare la plus proche.", Effect: EffectMoveNearest, Amount: 1},
+		{Text: "Avancez jusqu'au Service Public le plus proche.", Effect: EffectMoveNearest, Amount: 2},
 	}
 }
 

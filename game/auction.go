@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/AchrafSoltani/MoroccanMonopoly/config"
+	"github.com/AchrafSoltani/MoroccanMonopoly/render"
 )
 
 // startAuction begins an auction for the given property.
@@ -68,7 +69,7 @@ func (g *Game) advanceAuction() {
 
 // handleAuctionClick processes auction dialog button clicks.
 func (g *Game) handleAuctionClick() {
-	if g.DialogHovered < 0 {
+	if g.DialogHovered == render.DialogNoHover {
 		return
 	}
 
