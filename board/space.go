@@ -18,12 +18,13 @@ const (
 
 // Space represents a single board space.
 type Space struct {
-	Index    int
-	Name     string
-	Type     SpaceType
-	Group    ColorGroup
-	Price    int
-	Rent     [6]int // base, 1 house, 2 houses, 3 houses, 4 houses, hotel
+	Index     int
+	Name      string
+	ShortName string // short display name for the board (max ~7 chars)
+	Type      SpaceType
+	Group     ColorGroup
+	Price     int
+	Rent      [6]int // base, 1 house, 2 houses, 3 houses, 4 houses, hotel
 	HouseCost int
 	TaxAmount int // only for SpaceTax
 }

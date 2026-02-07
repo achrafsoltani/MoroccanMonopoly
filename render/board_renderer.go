@@ -178,7 +178,11 @@ func (br *BoardRenderer) drawSpaceText(canvas *glow.Canvas, space board.Space, r
 		return
 	}
 
-	name := abbreviate(space.Name, 7)
+	// Use ShortName if available, otherwise fall back to abbreviation
+	name := space.ShortName
+	if name == "" {
+		name = abbreviate(space.Name, 7)
+	}
 	price := ""
 	if space.Price > 0 {
 		price = fmt.Sprintf("%dMAD", space.Price)
@@ -192,10 +196,6 @@ func (br *BoardRenderer) drawSpaceText(canvas *glow.Canvas, space board.Space, r
 		name = "CAISSE"
 	case board.SpaceTax:
 		price = fmt.Sprintf("%dMAD", space.TaxAmount)
-	case board.SpaceRailroad:
-		name = abbreviate(space.Name, 7)
-	case board.SpaceUtility:
-		name = abbreviate(space.Name, 7)
 	}
 
 	switch side {
