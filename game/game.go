@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/AchrafSoltani/MoroccanMonopoly/audio"
 	"github.com/AchrafSoltani/MoroccanMonopoly/board"
@@ -66,11 +67,15 @@ type Game struct {
 	AuctionHighBidder int
 
 	// Trade state
-	TradePartner     int // target player index
-	TradeOfferedProps []int
-	TradeWantedProps  []int
-	TradeOfferedMoney int
-	TradeWantedMoney  int
+	TradePartner      int // target player index
+	TradeOfferedProps  []int
+	TradeWantedProps   []int
+	TradeOfferedMoney  int
+	TradeWantedMoney   int
+	TradeStage         TradeState
+	TradeOfferJailCard bool // offering a jail card
+	TradeWantJailCard  bool // requesting a jail card
+	PendingOffer       *TradeOffer // for human-to-human confirmation
 
 	// Buttons
 	Buttons []render.Button
@@ -100,14 +105,25 @@ func (g *Game) OnResize(width, height int) {
 
 // repositionButtons updates button positions from the current layout.
 func (g *Game) repositionButtons() {
-	bx := g.Layout.PanelX + 20
-	by := 360
-	bw := 90
-	bh := 28
+	margin := 20
+	bx := g.Layout.PanelX + margin
+	availW := g.Layout.PanelWidth - 2*margin
 	gap := 6
+	bw := (availW - gap) / 2
+	bh := 28
+
+	// Place buttons starting from roughly the vertical middle of the window,
+	// clamped to a sensible range.
+	by := g.Layout.WinH/2 - 30
+	if by < 260 {
+		by = 260
+	}
+	if by > 400 {
+		by = 400
+	}
 
 	positions := [][4]int{
-		{bx, by, bw*2 + gap, bh},                 // Roll Dice
+		{bx, by, bw*2 + gap, bh},                 // Roll Dice (full width)
 		{bx, by + bh + gap, bw, bh},               // Buy
 		{bx + bw + gap, by + bh + gap, bw, bh},    // Auction
 		{bx, by + 2*(bh+gap), bw, bh},             // Build
@@ -213,21 +229,17 @@ func (g *Game) StartGame(players []*player.Player) {
 }
 
 func (g *Game) setupButtons() {
-	bx := g.Layout.PanelX + 20
-	by := 360
-	bw := 90
-	bh := 28
-	gap := 6
-
+	// Create buttons with placeholder positions; repositionButtons() will set the real coords.
 	g.Buttons = []render.Button{
-		render.NewButton("Roll Dice", bx, by, bw*2+gap, bh),
-		render.NewButton("Buy", bx, by+bh+gap, bw, bh),
-		render.NewButton("Auction", bx+bw+gap, by+bh+gap, bw, bh),
-		render.NewButton("Build", bx, by+2*(bh+gap), bw, bh),
-		render.NewButton("Mortgage", bx+bw+gap, by+2*(bh+gap), bw, bh),
-		render.NewButton("Trade", bx, by+3*(bh+gap), bw, bh),
-		render.NewButton("End Turn", bx+bw+gap, by+3*(bh+gap), bw, bh),
+		render.NewButton("Roll Dice", 0, 0, 0, 0),
+		render.NewButton("Buy", 0, 0, 0, 0),
+		render.NewButton("Auction", 0, 0, 0, 0),
+		render.NewButton("Build", 0, 0, 0, 0),
+		render.NewButton("Mortgage", 0, 0, 0, 0),
+		render.NewButton("Trade", 0, 0, 0, 0),
+		render.NewButton("End Turn", 0, 0, 0, 0),
 	}
+	g.repositionButtons()
 }
 
 // currentPlayer returns the active player.
@@ -321,6 +333,12 @@ func (g *Game) drawPlaying(canvas *glow.Canvas) {
 		}
 	}
 
+	// Highlight current player's token
+	cp := g.currentPlayer()
+	if cp != nil && !cp.Bankrupt {
+		render.DrawTokenHighlight(canvas, cp, g.BoardRenderer.SpaceRects[cp.Position], g.GameTimer)
+	}
+
 	// Draw HUD panel
 	render.DrawHUD(canvas, g.hudData(), g.Layout.PanelX, g.Layout.PanelWidth, g.Layout.WinH)
 
@@ -367,15 +385,30 @@ func (g *Game) drawBoardHover(canvas *glow.Canvas) {
 				if prop.OwnerID >= 0 {
 					ownerName = g.Players[prop.OwnerID].Name
 				}
-				groupCol := render.SpaceBg
-				if space.Type == board.SpaceProperty {
-					groupCol = render.GroupColor(space.Group)
+				cardX := g.Layout.PanelX + 20
+				cardW := g.Layout.PanelWidth - 40
+
+				switch space.Type {
+				case board.SpaceRailroad:
+					ownedCount := 0
+					if prop.OwnerID >= 0 {
+						ownedCount = g.countOwnedRailroads(prop.OwnerID)
+					}
+					render.DrawRailroadCard(canvas, cardX, g.Layout.WinH-150, cardW,
+						space.Name, space.Price, ownerName, ownedCount, prop.Mortgaged)
+				case board.SpaceUtility:
+					ownedCount := 0
+					if prop.OwnerID >= 0 {
+						ownedCount = g.countOwnedUtilities(prop.OwnerID)
+					}
+					render.DrawUtilityCard(canvas, cardX, g.Layout.WinH-130, cardW,
+						space.Name, space.Price, ownerName, ownedCount, prop.Mortgaged)
+				default:
+					groupCol := render.GroupColor(space.Group)
+					render.DrawPropertyCard(canvas, cardX, g.Layout.WinH-180, cardW,
+						space.Name, space.Price, space.Rent, space.HouseCost,
+						groupCol, ownerName, prop.Houses, prop.Mortgaged)
 				}
-				// Draw card on the HUD panel
-				render.DrawPropertyCard(canvas,
-					g.Layout.PanelX+20, g.Layout.WinH-180, g.Layout.PanelWidth-40,
-					space.Name, space.Price, space.Rent, space.HouseCost,
-					groupCol, ownerName, prop.Houses, prop.Mortgaged)
 			}
 			break
 		}
@@ -397,6 +430,22 @@ func (g *Game) drawDialogs(canvas *glow.Canvas) {
 			Buttons: []render.DialogButton{
 				{Label: fmt.Sprintf("Buy for %d MAD", space.Price), ID: 0, Enabled: p.Money >= space.Price},
 				{Label: "Decline (Auction)", ID: 1, Enabled: true},
+			},
+		}
+		g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
+
+	case DialogIncomeTax:
+		p := g.currentPlayer()
+		tenPercent := g.PlayerNetWorth(p.ID) / 10
+		data := render.DialogData{
+			Title: "Impot sur le Revenu",
+			Lines: []string{
+				fmt.Sprintf("%s must pay income tax.", p.Name),
+				fmt.Sprintf("Net worth: %d MAD", g.PlayerNetWorth(p.ID)),
+			},
+			Buttons: []render.DialogButton{
+				{Label: "Pay 200 MAD (flat)", ID: 0, Enabled: true},
+				{Label: fmt.Sprintf("Pay 10%% (%d MAD)", tenPercent), ID: 1, Enabled: true},
 			},
 		}
 		g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
@@ -481,8 +530,8 @@ func (g *Game) drawDialogs(canvas *glow.Canvas) {
 
 	case DialogTrade:
 		p := g.currentPlayer()
-		if g.TradePartner < 0 {
-			// Select trade partner
+		switch g.TradeStage {
+		case TradeSelectPartner:
 			var btns []render.DialogButton
 			for _, other := range g.Players {
 				if other.ID != p.ID && !other.Bankrupt {
@@ -497,26 +546,146 @@ func (g *Game) drawDialogs(canvas *glow.Canvas) {
 				Buttons: btns,
 			}
 			g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
-		} else {
-			// Simple trade: select one of your properties to offer
+
+		case TradeSelectOffer:
 			partner := g.Players[g.TradePartner]
 			var btns []render.DialogButton
+
+			// Own properties to offer (toggle)
 			for _, idx := range p.Properties {
 				space := g.Board.Spaces[idx]
-				label := fmt.Sprintf("Offer: %s", space.Name)
-				btns = append(btns, render.DialogButton{Label: label, ID: idx, Enabled: !g.Board.Properties[idx].Mortgaged && g.Board.Properties[idx].Houses == 0})
+				offered := g.tradePropsContains(g.TradeOfferedProps, idx)
+				prefix := "[ ] Offer: "
+				if offered {
+					prefix = "[X] Offer: "
+				}
+				btns = append(btns, render.DialogButton{
+					Label:   prefix + space.Name,
+					ID:      idx,
+					Enabled: !g.Board.Properties[idx].Mortgaged && g.Board.Properties[idx].Houses == 0,
+				})
 			}
-			// Also show partner's properties we could request
+			// Partner properties to request (toggle)
 			for _, idx := range partner.Properties {
 				space := g.Board.Spaces[idx]
-				label := fmt.Sprintf("Want: %s", space.Name)
-				btns = append(btns, render.DialogButton{Label: label, ID: 1000 + idx, Enabled: !g.Board.Properties[idx].Mortgaged && g.Board.Properties[idx].Houses == 0})
+				wanted := g.tradePropsContains(g.TradeWantedProps, idx)
+				prefix := "[ ] Want:  "
+				if wanted {
+					prefix = "[X] Want:  "
+				}
+				btns = append(btns, render.DialogButton{
+					Label:   prefix + space.Name,
+					ID:      1000 + idx,
+					Enabled: !g.Board.Properties[idx].Mortgaged && g.Board.Properties[idx].Houses == 0,
+				})
 			}
+
+			// Money buttons
+			btns = append(btns, render.DialogButton{Label: fmt.Sprintf("Offer +50 MAD (now: %d)", g.TradeOfferedMoney), ID: 2000, Enabled: true})
+			btns = append(btns, render.DialogButton{Label: fmt.Sprintf("Offer -50 MAD (now: %d)", g.TradeOfferedMoney), ID: 2001, Enabled: g.TradeOfferedMoney >= 50})
+			btns = append(btns, render.DialogButton{Label: fmt.Sprintf("Want +50 MAD (now: %d)", g.TradeWantedMoney), ID: 2002, Enabled: true})
+			btns = append(btns, render.DialogButton{Label: fmt.Sprintf("Want -50 MAD (now: %d)", g.TradeWantedMoney), ID: 2003, Enabled: g.TradeWantedMoney >= 50})
+
+			// Jail card toggles
+			if p.GetOutOfJailCards > 0 {
+				jailLabel := "[ ] Offer Jail Card"
+				if g.TradeOfferJailCard {
+					jailLabel = "[X] Offer Jail Card"
+				}
+				btns = append(btns, render.DialogButton{Label: jailLabel, ID: 2004, Enabled: true})
+			}
+			if partner.GetOutOfJailCards > 0 {
+				jailLabel := "[ ] Want Jail Card"
+				if g.TradeWantJailCard {
+					jailLabel = "[X] Want Jail Card"
+				}
+				btns = append(btns, render.DialogButton{Label: jailLabel, ID: 2005, Enabled: true})
+			}
+
+			// Propose / Cancel
+			hasContent := len(g.TradeOfferedProps) > 0 || len(g.TradeWantedProps) > 0 ||
+				g.TradeOfferedMoney > 0 || g.TradeWantedMoney > 0 ||
+				g.TradeOfferJailCard || g.TradeWantJailCard
+			btns = append(btns, render.DialogButton{Label: "Propose Trade >>", ID: 3000, Enabled: hasContent})
 			btns = append(btns, render.DialogButton{Label: "Cancel", ID: -1, Enabled: true})
+
+			lines := []string{fmt.Sprintf("Building offer with %s:", partner.Name)}
 			data := render.DialogData{
-				Title:   fmt.Sprintf("Trade with %s", partner.Name),
-				Lines:   []string{"Select properties to trade:"},
+				Title:   "Trade - Build Offer",
+				Lines:   lines,
 				Buttons: btns,
+			}
+			g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
+
+		case TradeConfirm:
+			partner := g.Players[g.TradePartner]
+			var lines []string
+			lines = append(lines, fmt.Sprintf("Trade with %s:", partner.Name))
+			lines = append(lines, "--- You give ---")
+			for _, idx := range g.TradeOfferedProps {
+				lines = append(lines, "  "+g.Board.Spaces[idx].Name)
+			}
+			if g.TradeOfferedMoney > 0 {
+				lines = append(lines, fmt.Sprintf("  %d MAD", g.TradeOfferedMoney))
+			}
+			if g.TradeOfferJailCard {
+				lines = append(lines, "  Jail Card")
+			}
+			lines = append(lines, "--- You get ---")
+			for _, idx := range g.TradeWantedProps {
+				lines = append(lines, "  "+g.Board.Spaces[idx].Name)
+			}
+			if g.TradeWantedMoney > 0 {
+				lines = append(lines, fmt.Sprintf("  %d MAD", g.TradeWantedMoney))
+			}
+			if g.TradeWantJailCard {
+				lines = append(lines, "  Jail Card")
+			}
+
+			data := render.DialogData{
+				Title: "Confirm Trade",
+				Lines: lines,
+				Buttons: []render.DialogButton{
+					{Label: "Propose Trade", ID: 0, Enabled: true},
+					{Label: "Go Back", ID: 1, Enabled: true},
+					{Label: "Cancel", ID: -1, Enabled: true},
+				},
+			}
+			g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
+		}
+
+	case DialogTradeReceived:
+		// Show incoming trade offer for human-to-human trades
+		if g.PendingOffer != nil {
+			from := g.Players[g.PendingOffer.FromPlayer]
+			var lines []string
+			lines = append(lines, fmt.Sprintf("%s offers you:", from.Name))
+			for _, idx := range g.PendingOffer.OfferedProps {
+				lines = append(lines, "  "+g.Board.Spaces[idx].Name)
+			}
+			if g.PendingOffer.OfferedMoney > 0 {
+				lines = append(lines, fmt.Sprintf("  %d MAD", g.PendingOffer.OfferedMoney))
+			}
+			if g.PendingOffer.OfferedJailCards > 0 {
+				lines = append(lines, "  Jail Card")
+			}
+			lines = append(lines, "In exchange for:")
+			for _, idx := range g.PendingOffer.WantedProps {
+				lines = append(lines, "  "+g.Board.Spaces[idx].Name)
+			}
+			if g.PendingOffer.WantedMoney > 0 {
+				lines = append(lines, fmt.Sprintf("  %d MAD", g.PendingOffer.WantedMoney))
+			}
+			if g.PendingOffer.WantedJailCards > 0 {
+				lines = append(lines, "  Jail Card")
+			}
+			data := render.DialogData{
+				Title: "Trade Offer Received",
+				Lines: lines,
+				Buttons: []render.DialogButton{
+					{Label: "Accept", ID: 0, Enabled: true},
+					{Label: "Decline", ID: 1, Enabled: true},
+				},
 			}
 			g.DialogHovered = render.DrawDialog(canvas, data, g.MouseX, g.MouseY)
 		}
@@ -524,13 +693,90 @@ func (g *Game) drawDialogs(canvas *glow.Canvas) {
 }
 
 func (g *Game) drawGameOver(canvas *glow.Canvas) {
+	// Animated zellige background
+	render.DrawMenuBackground(canvas, g.GameTimer)
+
 	cx := canvas.Width() / 2
-	render.DrawTextCentered(canvas, "GAME OVER", cx, 300, render.TextGold, 4)
-	if len(g.alivePlayers()) == 1 {
-		winner := g.alivePlayers()[0]
-		render.DrawTextCentered(canvas, winner.Name+" WINS!", cx, 380, render.PlayerColors[winner.ID%4], 3)
+
+	// Title
+	render.DrawTextCentered(canvas, "GAME OVER", cx+2, 102, glow.Color{R: 0, G: 0, B: 0}, 4)
+	render.DrawTextCentered(canvas, "GAME OVER", cx, 100, render.TextGold, 4)
+
+	// Winner announcement
+	alive := g.alivePlayers()
+	if len(alive) == 1 {
+		winner := alive[0]
+		render.DrawTextCentered(canvas, winner.Name+" WINS!", cx, 160, render.PlayerColors[winner.ID%4], 3)
 	}
-	render.DrawTextCentered(canvas, "Press ENTER to return to menu", cx, 460, render.TextLight, 1)
+
+	// Build rankings sorted by net worth (descending)
+	type playerStat struct {
+		p        *player.Player
+		netWorth int
+		houses   int
+		hotels   int
+	}
+	var stats []playerStat
+	for _, p := range g.Players {
+		nw := 0
+		houses := 0
+		hotels := 0
+		if !p.Bankrupt {
+			nw = g.PlayerNetWorth(p.ID)
+			for _, idx := range p.Properties {
+				h := g.Board.Properties[idx].Houses
+				if h == config.HotelLevel {
+					hotels++
+				} else {
+					houses += h
+				}
+			}
+		}
+		stats = append(stats, playerStat{p: p, netWorth: nw, houses: houses, hotels: hotels})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].p.Bankrupt != stats[j].p.Bankrupt {
+			return !stats[i].p.Bankrupt // non-bankrupt first
+		}
+		return stats[i].netWorth > stats[j].netWorth
+	})
+
+	// Rankings table
+	y := 210
+	render.DrawTextCentered(canvas, "--- Final Standings ---", cx, y, render.ZelligeGold, 1)
+	y += 20
+
+	// Header
+	hx := cx - 180
+	render.DrawText(canvas, "#", hx, y, render.TextLight, 1)
+	render.DrawText(canvas, "Player", hx+20, y, render.TextLight, 1)
+	render.DrawText(canvas, "Cash", hx+160, y, render.TextLight, 1)
+	render.DrawText(canvas, "Worth", hx+230, y, render.TextLight, 1)
+	render.DrawText(canvas, "Props", hx+300, y, render.TextLight, 1)
+	render.DrawText(canvas, "H/Ht", hx+350, y, render.TextLight, 1)
+	y += 16
+
+	// Separator
+	canvas.DrawLine(hx, y-2, hx+380, y-2, render.PanelBorder)
+
+	for rank, s := range stats {
+		col := render.PlayerColors[s.p.ID%4]
+		status := ""
+		if s.p.Bankrupt {
+			col = render.MortgageColor
+			status = " [BANKRUPT]"
+		}
+		render.DrawText(canvas, fmt.Sprintf("%d", rank+1), hx, y, col, 1)
+		render.DrawText(canvas, s.p.Name+status, hx+20, y, col, 1)
+		render.DrawText(canvas, fmt.Sprintf("%d", s.p.Money), hx+160, y, col, 1)
+		render.DrawText(canvas, fmt.Sprintf("%d", s.netWorth), hx+230, y, col, 1)
+		render.DrawText(canvas, fmt.Sprintf("%d", len(s.p.Properties)), hx+300, y, col, 1)
+		render.DrawText(canvas, fmt.Sprintf("%d/%d", s.houses, s.hotels), hx+350, y, col, 1)
+		y += 16
+	}
+
+	y += 20
+	render.DrawTextCentered(canvas, "Press ENTER to return to menu", cx, y, render.TextLight, 1)
 }
 
 func (g *Game) keyMenu(key glow.Key) {
@@ -671,6 +917,26 @@ func (g *Game) hudData() render.HUDData {
 		})
 	}
 	return data
+}
+
+// tradePropsContains checks if a space index is in a property list.
+func (g *Game) tradePropsContains(props []int, idx int) bool {
+	for _, p := range props {
+		if p == idx {
+			return true
+		}
+	}
+	return false
+}
+
+// tradePropsToggle adds or removes a space index from a property list.
+func (g *Game) tradePropsToggle(props []int, idx int) []int {
+	for i, p := range props {
+		if p == idx {
+			return append(props[:i], props[i+1:]...)
+		}
+	}
+	return append(props, idx)
 }
 
 func (g *Game) phaseString() string {

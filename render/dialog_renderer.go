@@ -6,6 +6,9 @@ import (
 	"github.com/AchrafSoltani/glow"
 )
 
+// DialogNoHover is the sentinel returned by DrawDialog when no button is hovered.
+const DialogNoHover = -999
+
 // DialogData holds everything needed to render a modal dialog.
 type DialogData struct {
 	Title   string
@@ -30,6 +33,12 @@ func DrawDialog(canvas *glow.Canvas, data DialogData, mouseX, mouseY int) int {
 	}
 
 	w := 380
+	if maxW := canvas.Width() - 40; maxW < w {
+		w = maxW
+	}
+	if w < 200 {
+		w = 200
+	}
 	h := 80 + len(data.Lines)*14 + len(data.Buttons)*34
 	x := (canvas.Width() - w) / 2
 	y := (canvas.Height() - h) / 2
@@ -53,7 +62,7 @@ func DrawDialog(canvas *glow.Canvas, data DialogData, mouseX, mouseY int) int {
 
 	// Buttons
 	ty += 10
-	hoveredID := -1
+	hoveredID := DialogNoHover
 	bw := w - 40
 	bh := 26
 	for _, btn := range data.Buttons {
@@ -99,6 +108,82 @@ func DrawPropertyCard(canvas *glow.Canvas, x, y, w int, name string, price int, 
 	// Owner
 	if ownerName != "" {
 		DrawText(canvas, "Owner: "+ownerName, x+8, y+142, TextDark, 1)
+	}
+	if mortgaged {
+		DrawTextCentered(canvas, "MORTGAGED", x+w/2, y+h-14, ColorRed, 1)
+	}
+}
+
+// DrawRailroadCard renders a railroad info card showing rent per count owned.
+func DrawRailroadCard(canvas *glow.Canvas, x, y, w int, name string, price int, ownerName string, ownedCount int, mortgaged bool) {
+	h := 130
+
+	// Card background
+	canvas.DrawRect(x, y, w, h, glow.Color{R: 250, G: 245, B: 235})
+	canvas.DrawRectOutline(x, y, w, h, TextDark)
+
+	// Grey strip for railroads
+	canvas.DrawRect(x+1, y+1, w-2, 22, ColorRailroad)
+
+	// Name
+	DrawTextCentered(canvas, name, x+w/2, y+5, TextDark, 1)
+
+	// Price
+	DrawText(canvas, fmt.Sprintf("Price: %d MAD", price), x+8, y+28, TextDark, 1)
+
+	// Rent table
+	rents := [4]int{25, 50, 100, 200}
+	labels := [4]string{"1 Railroad", "2 Railroads", "3 Railroads", "4 Railroads"}
+	for i := 0; i < 4; i++ {
+		ry := y + 42 + i*14
+		label := labels[i]
+		if i+1 == ownedCount {
+			label = "> " + label
+		}
+		DrawText(canvas, label, x+8, ry, TextDark, 1)
+		DrawTextRight(canvas, fmt.Sprintf("%d", rents[i]), x+w-8, ry, TextDark, 1)
+	}
+
+	// Owner
+	if ownerName != "" {
+		DrawText(canvas, fmt.Sprintf("Owner: %s (%d)", ownerName, ownedCount), x+8, y+100, TextDark, 1)
+	}
+	if mortgaged {
+		DrawTextCentered(canvas, "MORTGAGED", x+w/2, y+h-14, ColorRed, 1)
+	}
+}
+
+// DrawUtilityCard renders a utility info card showing dice multiplier rent.
+func DrawUtilityCard(canvas *glow.Canvas, x, y, w int, name string, price int, ownerName string, ownedCount int, mortgaged bool) {
+	h := 110
+
+	// Card background
+	canvas.DrawRect(x, y, w, h, glow.Color{R: 250, G: 245, B: 235})
+	canvas.DrawRectOutline(x, y, w, h, TextDark)
+
+	// Grey strip for utilities
+	canvas.DrawRect(x+1, y+1, w-2, 22, ColorUtility)
+
+	// Name
+	DrawTextCentered(canvas, name, x+w/2, y+5, TextDark, 1)
+
+	// Price
+	DrawText(canvas, fmt.Sprintf("Price: %d MAD", price), x+8, y+28, TextDark, 1)
+
+	// Rent rules
+	label1 := "1 Utility: 4x dice roll"
+	label2 := "2 Utilities: 10x dice roll"
+	if ownedCount == 1 {
+		label1 = "> " + label1
+	} else if ownedCount == 2 {
+		label2 = "> " + label2
+	}
+	DrawText(canvas, label1, x+8, y+46, TextDark, 1)
+	DrawText(canvas, label2, x+8, y+60, TextDark, 1)
+
+	// Owner
+	if ownerName != "" {
+		DrawText(canvas, fmt.Sprintf("Owner: %s (%d)", ownerName, ownedCount), x+8, y+80, TextDark, 1)
 	}
 	if mortgaged {
 		DrawTextCentered(canvas, "MORTGAGED", x+w/2, y+h-14, ColorRed, 1)
